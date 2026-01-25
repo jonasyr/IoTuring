@@ -357,7 +357,7 @@ class HomeAssistantWarehouse(Warehouse):
     NAME = "HomeAssistant"
 
     def Start(self):
-        #  I configure my Warehouse with configurations
+        #  I configure my Warehouse with configurations
         self.clientName = self.GetFromConfigurations(CONFIG_KEY_NAME)
         self.client = MQTTClient(self.GetFromConfigurations(CONFIG_KEY_ADDRESS),
                                  self.GetFromConfigurations(CONFIG_KEY_PORT),
@@ -365,8 +365,11 @@ class HomeAssistantWarehouse(Warehouse):
                                  self.GetFromConfigurations(
                                      CONFIG_KEY_USERNAME),
                                  self.GetFromConfigurations(CONFIG_KEY_PASSWORD))
-        self.client.LwtSet(self.MakeValuesTopic(
-            LWT_TOPIC_SUFFIX), LWT_PAYLOAD_OFFLINE)
+        
+        # Set Last Will to clear User Active state when connection is lost
+        # This publishes "False" to the IdleTime is_active sensor topic
+        user_active_topic = self.MakeValuesTopic("IdleTime.is_active")
+        self.client.LwtSet(user_active_topic, "False")
 
         self.client.AsyncConnect()
 
@@ -429,6 +432,11 @@ class HomeAssistantWarehouse(Warehouse):
         while (not self.client.IsConnected()):
             time.sleep(self.retry_interval)
 
+        # First time connected - send initial online states
+        if self.loopCounter == 0:
+            # Send LWT online status
+            self.client.SendTopicData(self.MakeValuesTopic(LWT_TOPIC_SUFFIX), LWT_PAYLOAD_ONLINE)
+
         # Mechanism to call the function to send discovery data every CONFIGURATION_SEND_LOOP_SKIP_NUMBER loop
         if self.loopCounter == 0:
             self.SendEntityDataConfigurations()
@@ -448,6 +456,27 @@ class HomeAssistantWarehouse(Warehouse):
             payload = hassentity.discovery_payload
 
             self.client.SendTopicData(topic, json.dumps(payload))
+
+    def SendShutdownMessages(self):
+        """ Send shutdown messages for graceful disconnect """
+        if self.client.IsConnected():
+            self.Log(self.LOG_INFO, "Sending shutdown messages...")
+            
+            # Set User Active to False
+            user_active_topic = self.MakeValuesTopic("IdleTime.is_active")
+            self.client.SendTopicData(user_active_topic, "False")
+            self.Log(self.LOG_INFO, f"Sent User Active=False to {user_active_topic}")
+            
+            # Set LWT to OFFLINE
+            lwt_topic = self.MakeValuesTopic(LWT_TOPIC_SUFFIX)
+            self.client.SendTopicData(lwt_topic, LWT_PAYLOAD_OFFLINE)
+            self.Log(self.LOG_INFO, f"Sent OFFLINE to {lwt_topic}")
+            
+            # Give MQTT client time to send the messages
+            time.sleep(0.5)
+            self.Log(self.LOG_INFO, "Shutdown messages sent")
+        else:
+            self.Log(self.LOG_WARNING, "MQTT not connected, skipping shutdown messages")
 
     def MakeValuesTopic(self, topic_suffix: str) -> str:
         """ Prepares a topic, including the app name, the client name and finally a passed id """

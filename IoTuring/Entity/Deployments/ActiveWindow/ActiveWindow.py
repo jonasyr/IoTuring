@@ -1,4 +1,5 @@
 import re
+import json
 from IoTuring.Entity.Entity import Entity
 from IoTuring.Entity.EntityData import EntitySensor
 from IoTuring.MyApp.SystemConsts import OperatingSystemDetection as OsD
@@ -28,7 +29,7 @@ class ActiveWindow(Entity):
     def Initialize(self):
 
         UpdateFunction = {
-            OsD.LINUX: self.GetActiveWindow_Linux,
+            OsD.LINUX: self.GetActiveWindow_Linux_Wayland if De.IsWayland() else self.GetActiveWindow_Linux,
             OsD.WINDOWS: self.GetActiveWindow_Windows,
             OsD.MACOS: self.GetActiveWindow_macOS
         }
@@ -77,13 +78,65 @@ class ActiveWindow(Entity):
 
         return 'Inactive'
 
+    def GetActiveWindow_Linux_Wayland(self) -> str:
+        # Try Hyprland first (most common for this setup)
+        if OsD.CommandExists("hyprctl"):
+            p = self.RunCommand("hyprctl activewindow -j")
+            
+            if p.stdout:
+                try:
+                    data = json.loads(p.stdout)
+                    title = data.get('title', '')
+                    if title:
+                        return title
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        
+        # Try Sway/i3
+        if OsD.CommandExists("swaymsg"):
+            p = self.RunCommand("swaymsg -t get_tree")
+            
+            if p.stdout:
+                try:
+                    data = json.loads(p.stdout)
+                    # Recursively find focused window
+                    def find_focused(node):
+                        if node.get('focused'):
+                            return node.get('name', '')
+                        for child in node.get('nodes', []) + node.get('floating_nodes', []):
+                            result = find_focused(child)
+                            if result:
+                                return result
+                        return None
+                    
+                    title = find_focused(data)
+                    if title:
+                        return title
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        
+        # Try KDE Plasma (KWin)
+        if OsD.CommandExists("kdotool"):
+            p = self.RunCommand("kdotool getactivewindow getwindowname")
+            
+            if p.stdout:
+                return p.stdout.strip()
+        
+        return 'Unknown'
+
     @classmethod
     def CheckSystemSupport(cls):
         if OsD.IsLinux():
             if De.IsWayland():
-                raise Exception("Wayland is not supported")
-            elif not OsD.CommandExists("xprop"):
-                raise Exception("No xprop command found!")
+                # Check for supported Wayland compositors
+                if not (OsD.CommandExists("hyprctl") or 
+                        OsD.CommandExists("swaymsg") or 
+                        OsD.CommandExists("kdotool")):
+                    raise Exception("No supported Wayland compositor found! Requires: hyprctl (Hyprland), swaymsg (Sway), or kdotool (KDE)")
+            else:
+                # X11 support
+                if not OsD.CommandExists("xprop"):
+                    raise Exception("No xprop command found!")
 
         elif OsD.IsWindows() or OsD.IsMacos():
 

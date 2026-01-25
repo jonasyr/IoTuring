@@ -18,6 +18,7 @@ entities = []
 
 
 def loop():
+    global warehouses, entities
 
     parser = argparse.ArgumentParser(
         prog=App.getName(),
@@ -75,6 +76,7 @@ def loop():
 
     # This have to start after configurator.Menu(), otherwise won't work starting from the menu
     signal.signal(signal.SIGINT, Exit_SIGINT_handler)
+    signal.signal(signal.SIGTERM, Exit_SIGINT_handler)  # Also handle SIGTERM from systemctl stop
 
     # Load Settings:
     settings = ConfiguratorLoader(configurator).LoadSettings()
@@ -119,6 +121,14 @@ def Exit_SIGINT_handler(sig=None, frame=None):
     logger = Logger()
     logger.Log(Logger.LOG_INFO, "Main", "Application closed by SigInt",
                logtarget=Logger.LOGTARGET_FILE)  # to file
+
+    # Send graceful shutdown messages to MQTT warehouses
+    for warehouse in warehouses:
+        if hasattr(warehouse, 'SendShutdownMessages'):
+            try:
+                warehouse.SendShutdownMessages()
+            except Exception as e:
+                logger.Log(Logger.LOG_WARNING, "Main", f"Error sending shutdown messages: {e}")
 
     messages = ["Exiting...",
                 "Thanks for using IoTuring !"]

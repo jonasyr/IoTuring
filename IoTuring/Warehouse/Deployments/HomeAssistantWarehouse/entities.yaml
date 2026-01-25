@@ -24,6 +24,17 @@ UpTime:
   name: Uptime
   unit_of_measurement: min
   icon: mdi:clock
+IdleTime - idle_time:
+  name: Idle Time
+  unit_of_measurement: s
+  icon: mdi:timer-sand
+  device_class: duration
+IdleTime - is_active:
+  name: User Active
+  custom_type: binary_sensor
+  device_class: occupancy
+  payload_on: "True"
+  payload_off: "False"
 DesktopEnvironment:
   name: Desktop Environment
   icon: mdi:window-maximize
